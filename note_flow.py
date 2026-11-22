@@ -167,30 +167,73 @@ def refocus_end_text():
     key_ctrl_end()
     time.sleep(0.15)
 
+def fresh_reload():
+    """CDPだけでページをリロードして健全状態に戻す（beforeunload確認ダイアログもCDPで受諾）。"""
+    try:
+        js("window.addEventListener('beforeunload', e => { e.stopImmediatePropagation(); }, true)")
+        time.sleep(0.3)
+        js("location.reload()")
+    except Exception:
+        pass
+    time.sleep(2.5)
+    try:
+        cdp('Page.handleJavaScriptDialog', accept=True)
+    except Exception:
+        pass
+    time.sleep(5)
+    for _ in range(8):
+        try:
+            if pm_stats():
+                return 'OK'
+        except Exception:
+            pass
+        time.sleep(2)
+    return 'TIMEOUT'
+
 def click_end_text():
     """最終テキスト要素を画面内にスクロールして実マウスクリック→文末へ。
-    画像挿入後に最終テキストが画面外に出てクリック/貼り付けが無効になる問題の対策。"""
-    r = js("""(() => {
+    画像挿入後に最終テキストが画面外に出てクリック/貼り付けが無効になる問題の対策。
+    クリック後はフォーカスがPMに入ったことを検証し、外れていれば中央クリックで再試行する
+    （要素上端のクリックでキャレットが立たない→以降の全貼り付けが死ぬ実例の対策）。"""
+    def _pos_js(mode):
+        return js("""(() => {
       const pm = document.querySelector('.ProseMirror');
       if (!pm) return 'NO_PM';
       const walker = document.createTreeWalker(pm, NodeFilter.SHOW_TEXT);
       let last = null, n;
       while ((n = walker.nextNode())) { if (n.textContent.trim()) last = n; }
       if (!last) return 'NO_TEXT';
-      const el = last.parentElement;
-      el.scrollIntoView({block: 'center', behavior: 'instant'});
-      const rc = el.getBoundingClientRect();
-      return 'POS=' + Math.round(Math.max(10, rc.right - 4)) + ',' + Math.round(rc.top + Math.min(10, Math.max(2, rc.height/2)));
+      last.parentElement.scrollIntoView({block: 'center', behavior: 'instant'});
+      let rc = null;
+      try { const rng = document.createRange(); rng.selectNodeContents(last); rc = rng.getBoundingClientRect(); } catch (e) {}
+      if (!rc || rc.width === 0 || rc.height === 0) rc = last.parentElement.getBoundingClientRect();
+      if (!rc || rc.width === 0) return 'NO_RC';
+      let x, y;
+      x = rc.right - 4; y = rc.top + rc.height/2;
+      x = Math.max(10, Math.round(x)); y = Math.round(y);
+      if (y < 5 || y > 900) return 'OFFSCREEN:' + x + ',' + y;
+      return 'POS=' + x + ',' + y;
     })()""")
+    def _do_click(x, y):
+        cdp('Input.dispatchMouseEvent', type='mousePressed', x=x, y=y, button='left', clickCount=1)
+        cdp('Input.dispatchMouseEvent', type='mouseReleased', x=x, y=y, button='left', clickCount=1)
+        time.sleep(0.35)
+    def _focus_ok():
+        v = js("(() => { const pm = document.querySelector('.ProseMirror'); const ae = document.activeElement; return (ae && pm && (ae === pm || pm.contains(ae))) ? 'IN_PM' : 'OUT'; })()")
+        return v == 'IN_PM'
+    r = _pos_js('end')
     if not (isinstance(r, str) and r.startswith('POS=')):
         return r
     x_s, y_s = r[4:].split(',')
     x, y = int(x_s), int(y_s)
-    if y < 0 or y > 850:
-        return 'OFFSCREEN:' + r
-    cdp('Input.dispatchMouseEvent', type='mousePressed', x=x, y=y, button='left', clickCount=1)
-    cdp('Input.dispatchMouseEvent', type='mouseReleased', x=x, y=y, button='left', clickCount=1)
-    time.sleep(0.35)
+    _do_click(x, y)
+    if not _focus_ok():
+        r2 = _pos_js('center')
+        if isinstance(r2, str) and r2.startswith('POS='):
+            x2_s, y2_s = r2[4:].split(',')
+            _do_click(int(x2_s), int(y2_s))
+            if not _focus_ok():
+                return 'FOCUS_FAIL@%s,%s' % (x2_s, y2_s)
     key_ctrl_end()
     time.sleep(0.15)
     return 'OK@%d,%d' % (x, y)
