@@ -40,9 +40,11 @@ BU_NAME=notetest BU_CDP_URL=http://127.0.0.1:9222 browser-harness < run_timing.p
 
 ## 実装の要点（落とし穴）
 
-- **beforeunload**: noteエディタは保存済みでもハンドラが発火する。遷移前に `window.addEventListener('beforeunload', e => e.stopImmediatePropagation(), true)` をcapture段で注入
-- **画像挿入後のキャレット消失**: エディタは画像位置へ自動スクロールし、最後のテキスト要素がビューポート外（y≈-1600）に出る。以降のクリック・キー入力・貼り付けは黙って無効化される。→ `click_end_text()`（最終テキスト要素を `scrollIntoView({block:'center', behavior:'instant'})` で画面内に戻してからCDP実マウスクリック→Ctrl+End）を**毎ステップの貼り付け前に実行**
-- **画像の挿入**: スラッシュメニューは無い。「メニューを開く」ボタン→「画像」→ `Page.setInterceptFileChooserDialog` → `DOM.setFileInputFiles`。1枚1.1〜1.5秒（アップロード込み）
+- **beforeunload**: noteエディタは保存済みでもハンドラが発火する。遷移前に `window.addEventListener('beforeunload', e => e.stopImmediatePropagation(), true)` をcapture段で注入。リロード確認ダイアログは `Page.handleJavaScriptDialog(accept=True)` でCDPだけで受諾できる（OSレベル操作不要）
+- **画像挿入後のキャレット消失**: エディタは画像位置へ自動スクロールし、最後のテキスト要素がビューポート外（y≈-1600）に出る。以降のクリック・キー入力・貼り付けは黙って無効化される。→ `click_end_text()`（最終**テキストノード**の矩形＝行の中央を `scrollIntoView({block:'center', behavior:'instant'})` で画面内に戻してからCDP実マウスクリック→Ctrl+End→**フォーカスがProseMirrorに入ったことを検証**）を**毎ステップの貼り付け前に実行**。要素の上端をクリックするとキャレットが立たず全貼り付けが死ぬ
+- **画像の挿入**: スラッシュメニューは無い。「メニューを開く」ボタン→「画像」→ `Page.setInterceptFileChooserDialog`（ナビゲーションのたびに打ち直す）→ `DOM.setFileInputFiles`。1枚1.1〜1.5秒（アップロード込み）。**テキストキャレットのままメニューを開くとチューザが死ぬ**ので、画像ステップの直前は body中央クリック＋Ctrl+End でキャレットを作り直す
+- **画像は常に本文末尾に入る**: メニューからの画像挿入はキャレット位置を守らない（末尾に溜まる）。既存記事の途中に入れるには**画像ブロックの切り貼り移動**（画像クリック→Ctrl+X→目標段落を実クリック→Ctrl+V）が確実
+- **公開ウィザード**: 最終ボタンは「投稿する」（新規）/「更新する」（既存記事）。**タイトル欄が空だとバリデーションで静かに止まる**（「押しても進まない」ように見える）。投稿する/更新するは js .click() では発火しない — CDP実マウスクリック＋直後の `Page.handleJavaScriptDialog(accept=True)` 連打ループで通す。成否は `curl https://note.com/supertask/n/<id>` のHTTPコードで確認
 - **完了判定**: 文字数はProseMirror側の値を見る（`body.innerText` の「N 文字」は画像交じり長文で増えない実例あり）。画像は枚数照合
 - **下書きID**: 数字ではない（`n76b488849626` 形式）。正規表現は `[a-z0-9]+`
 
@@ -53,4 +55,4 @@ BU_NAME=notetest BU_CDP_URL=http://127.0.0.1:9222 browser-harness < run_timing.p
 
 ## 詳細記事
 
-note: （公開後にURLを追記）
+note: https://note.com/supertask/n/nddcc5a73b794
