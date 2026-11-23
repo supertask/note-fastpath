@@ -40,6 +40,9 @@ BU_NAME=notetest BU_CDP_URL=http://127.0.0.1:9222 browser-harness < run_timing.p
 
 ## 実装の要点（落とし穴）
 
+- **貼り付けは「記事全体の1発貼り」が原則（2026-11-23実測）**: 単一 `<p>` 断片の貼り付けはエディタが既存段落にマージするようになり、断片連投では段落構造が崩れる。全断片を連結した1つのHTMLを**空エディタへ1回だけ貼る**と39ブロックが一瞬で構造化される（断片連投38秒 → 1発貼り2秒）。画像はメニュー経由では必ず本文末尾に入るため、配置は画像ブロックの切り貼り移動（Ctrl+X→目標段落クリック→Ctrl+V）で行う。画像の特定は `img.naturalHeight`、引用ブロックは `figure.blockquote` として描かれる点に注意
+
+
 - **beforeunload**: noteエディタは保存済みでもハンドラが発火する。遷移前に `window.addEventListener('beforeunload', e => e.stopImmediatePropagation(), true)` をcapture段で注入。リロード確認ダイアログは `Page.handleJavaScriptDialog(accept=True)` でCDPだけで受諾できる（OSレベル操作不要）
 - **画像挿入後のキャレット消失**: エディタは画像位置へ自動スクロールし、最後のテキスト要素がビューポート外（y≈-1600）に出る。以降のクリック・キー入力・貼り付けは黙って無効化される。→ `click_end_text()`（最終**テキストノード**の矩形＝行の中央を `scrollIntoView({block:'center', behavior:'instant'})` で画面内に戻してからCDP実マウスクリック→Ctrl+End→**フォーカスがProseMirrorに入ったことを検証**）を**毎ステップの貼り付け前に実行**。要素の上端をクリックするとキャレットが立たず全貼り付けが死ぬ
 - **画像の挿入**: スラッシュメニューは無い。「メニューを開く」ボタン→「画像」→ `Page.setInterceptFileChooserDialog`（ナビゲーションのたびに打ち直す）→ `DOM.setFileInputFiles`。1枚1.1〜1.5秒（アップロード込み）。**テキストキャレットのままメニューを開くとチューザが死ぬ**ので、画像ステップの直前は body中央クリック＋Ctrl+End でキャレットを作り直す
